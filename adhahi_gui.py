@@ -125,7 +125,7 @@ def send_telegram(token, chat_id, text):
 
 
 # ── Selenium fill_and_submit ──────────────────────────────────────
-def fill_and_submit(cfg, wilaya, log_fn, ask_captcha_fn):
+def fill_and_submit(cfg, wilaya, log_fn):
     try:
         from selenium import webdriver
         from selenium.webdriver.common.by import By
@@ -212,35 +212,10 @@ def fill_and_submit(cfg, wilaya, log_fn, ask_captcha_fn):
         except Exception as e:
             log_fn("WARN", f"{tag} Checkbox error: {e}")
 
-        # ── CAPTCHA — manual input via GUI popup ─────────────────
-        time.sleep(0.5)
-        log_fn("INFO", f"{tag} 🔒 CAPTCHA required — check Chrome and type it in the popup …")
+        # ── CAPTCHA + Submit — done manually by user ──────────
+        log_fn("INFO", f"{tag} 🔒 CAPTCHA + Submit — please complete in Chrome")
         send_telegram(cfg["bot_token"], cfg["chat_id"],
-            f"🔒 CAPTCHA needed – Wilaya {wilaya}\n⏰ {now()}")
-        cap_text = ask_captcha_fn(wilaya)
-
-        if cap_text:
-            ci = wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR,"#reg-captcha-answer")))
-            ci.clear(); ci.send_keys(cap_text)
-            log_fn("OK", f"{tag} CAPTCHA entered: {cap_text}")
-
-        # ── Submit ───────────────────────────────────────────────
-        time.sleep(0.5)
-        try:
-            jc(wait.until(EC.element_to_be_clickable(
-                (By.CSS_SELECTOR,"button[type='submit']"))))
-            log_fn("OK", f"{tag} Submit clicked!")
-        except Exception as e:
-            log_fn("WARN", f"{tag} Submit click error: {e}")
-
-        log_fn("INFO", f"{tag} 📱 OTP sent to your phone — enter it in the browser")
-        send_telegram(cfg["bot_token"], cfg["chat_id"],
-            f"📱 OTP sent – Wilaya {wilaya}\nEnter code in browser\n⏰ {now()}")
-
-        log_fn("OK",   f"{tag} ✅ Registration submitted! Check adhahi.dz")
-        send_telegram(cfg["bot_token"], cfg["chat_id"],
-            f"✅ Registered – Wilaya {wilaya}\n⏰ {now()}")
+            f"🔒 CAPTCHA needed – Wilaya {wilaya}\nFill CAPTCHA & submit in browser\n⏰ {now()}")
 
     except Exception as e:
         log_fn("ERR", f"{tag} Browser error: {e}")
@@ -334,7 +309,7 @@ class App(tk.Tk):
             ("CNI  (9 digits)",   "cni",      False),
             ("Phone",             "phone",    False),
             ("Email  (optional)", "email",    False),
-            ("Password",          "password", True),
+            ("Password",          "password", False),
         ]:
             self._entry_row(body, lbl, key, secret)
 
@@ -563,32 +538,6 @@ class App(tk.Tk):
         messagebox.showinfo("Telegram","Message sent! Check your phone.")
 
     # ─────────────────────────────────────────────────────────────
-    # CAPTCHA POPUP  (called from background thread)
-    # ─────────────────────────────────────────────────────────────
-    def _ask_captcha(self, wilaya: str) -> str:
-        result = {"v":""}; ev = threading.Event()
-        def _show():
-            d = tk.Toplevel(self); d.title(f"CAPTCHA – Wilaya {wilaya}")
-            d.configure(bg=PANEL); d.grab_set(); d.focus_force()
-            tk.Label(d,
-                text=f"Auto-solve failed for Wilaya {wilaya}.\n"
-                     "Look at the Chrome window and type what you see:",
-                bg=PANEL, fg=TEXT, font=("Segoe UI",10),
-                justify="left").pack(padx=22, pady=(18,8))
-            var = tk.StringVar()
-            e = tk.Entry(d, textvariable=var, font=("Consolas",18),
-                         bg=ENTRY, fg=TEXT, insertbackground=TEXT,
-                         relief="flat", bd=6, width=12)
-            e.pack(padx=22, pady=6); e.focus()
-            def ok():
-                result["v"] = var.get().strip(); d.destroy(); ev.set()
-            tk.Button(d, text="Submit ↵", bg=GREEN, fg="#000",
-                      font=("Segoe UI",11,"bold"), relief="flat",
-                      cursor="hand2", command=ok).pack(pady=(8,18))
-            d.bind("<Return>", lambda _: ok())
-        self.after(0, _show); ev.wait(); return result["v"]
-
-    # ─────────────────────────────────────────────────────────────
     # START / STOP
     # ─────────────────────────────────────────────────────────────
     def _start(self):
@@ -675,7 +624,7 @@ class App(tk.Tk):
                                 success = False
                                 try:
                                     fill_and_submit(
-                                        c, w, self.log, self._ask_captcha)
+                                        c, w, self.log)
                                     success = True
                                 except Exception as e:
                                     self.log("ERR", f"[W{w}] Unhandled thread error: {e}")
