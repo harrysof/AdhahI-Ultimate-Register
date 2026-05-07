@@ -22,6 +22,19 @@ CONFIG_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adhahi_
 API_URL      = "https://adhahi.dz/api/v1/public/wilaya-quotas"
 REGISTER_URL = "https://adhahi.dz/register"
 
+# Cache ChromeDriver path once at startup — avoids re-downloading on every browser launch
+_CHROMEDRIVER_PATH = None
+def _get_chromedriver_path():
+    global _CHROMEDRIVER_PATH
+    if _CHROMEDRIVER_PATH is None:
+        try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            os.environ["WDM_LOG"] = "0"
+            _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+        except Exception as e:
+            raise RuntimeError(f"ChromeDriver setup failed: {e}")
+    return _CHROMEDRIVER_PATH
+
 ALL_WILAYAS = [
     ("01","Adrar"),          ("02","Chlef"),           ("03","Laghouat"),
     ("04","Oum El Bouaghi"), ("05","Batna"),            ("06","Béjaïa"),
@@ -120,7 +133,6 @@ def fill_and_submit(cfg, wilaya, log_fn, ask_captcha_fn):
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.chrome.service import Service
-        from webdriver_manager.chrome import ChromeDriverManager
     except ImportError:
         log_fn("ERR", "selenium / webdriver-manager not installed!"); return
 
@@ -129,15 +141,11 @@ def fill_and_submit(cfg, wilaya, log_fn, ask_captcha_fn):
     try:
         log_fn("INFO", f"{tag} Opening Chrome …")
 
-        # Point webdriver_manager cache to a stable writable folder
-        # (avoids issues inside PyInstaller _MEIPASS temp dirs)
-        os.environ["WDM_LOG"] = "0"  # suppress wdm console spam
-
         opts = webdriver.ChromeOptions()
         opts.add_argument("--start-maximized")
-        log_fn("INFO", f"{tag} Downloading / locating ChromeDriver …")
+        log_fn("INFO", f"{tag} Locating ChromeDriver …")
         driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
+            service=Service(_get_chromedriver_path()),
             options=opts)
         log_fn("OK",   f"{tag} Chrome launched")
         wait = WebDriverWait(driver, 30)
@@ -618,6 +626,16 @@ class App(tk.Tk):
 
         threading.Thread(target=self._poll_loop, daemon=True).start()
         self._tick()
+        # Pre-warm ChromeDriver in background so first detection launches instantly
+        threading.Thread(target=self._warmup_driver, daemon=True).start()
+
+    def _warmup_driver(self):
+        """Resolve ChromeDriver path in background so first browser launch is instant."""
+        try:
+            _get_chromedriver_path()
+            self.log("SYSTEM", "ChromeDriver ready ✓")
+        except Exception as e:
+            self.log("WARN", f"ChromeDriver pre-warm failed: {e}")
 
     def _stop(self):
         self._running = False
@@ -641,7 +659,11 @@ class App(tk.Tk):
 
                 if avail:
                     for w in avail:
-                        if w not in self._sessions and w not in self._done:
+                        if w in self._done:
+                            pass  # already successfully registered, skip silently
+                        elif w in self._sessions:
+                            self.log("INFO", f"Poll #{self._attempt:04d}  [{ts}]  Wilaya {w} still open (browser session active)")
+                        else:
                             self._sessions.add(w)
                             self.log("FOUND",
                                 f"🎉  WILAYA {w} IS OPEN!  Launching browser …")
@@ -650,15 +672,20 @@ class App(tk.Tk):
                                 f"🚨 <b>WILAYA {w} AVAILABLE!</b>\n⏰ {now()}")
                             snap = self.cfg.copy(); ww = w
                             def _run(w=ww, c=snap):
+                                success = False
                                 try:
                                     fill_and_submit(
                                         c, w, self.log, self._ask_captcha)
+                                    success = True
                                 except Exception as e:
                                     self.log("ERR", f"[W{w}] Unhandled thread error: {e}")
                                 finally:
                                     self._sessions.discard(w)
-                                    self._done.add(w)
-                                    self.log("SYSTEM", f"[W{w}] Session closed — wilaya locked to prevent re-trigger")
+                                    if success:
+                                        self._done.add(w)
+                                        self.log("SYSTEM", f"[W{w}] Session closed — registration done, wilaya locked")
+                                    else:
+                                        self.log("SYSTEM", f"[W{w}] Session closed after error — will re-try if slot re-opens")
                             threading.Thread(target=_run, daemon=True).start()
                 else:
                     self.log("INFO",
