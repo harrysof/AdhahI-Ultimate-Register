@@ -1,2 +1,14 @@
 selenium>=4.0.0
 webdriver-manager>=4.0.0
+
+# Image processing (captcha cleaning + upscaling)
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# OCR — EasyOCR (recommended, no external binary needed)
+easyocr>=1.7.0
+
+# OCR — pytesseract (optional fallback, requires Tesseract binary)
+# Install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki
+# then uncomment the line below:
+# pytesseract>=0.3.10
